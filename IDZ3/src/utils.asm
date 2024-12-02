@@ -1,101 +1,72 @@
+.globl process_files
+.globl remove_newline
+.globl reverse_file
+.globl file_error
+.globl filename_in
+.globl filename_out
+
 .data
+    error_msg: .string "Ошибка при работе с файлом\n"
+    error_input: .string "Ошибка: входной файл не существует: "
+    error_output: .string "Ошибка: не удалось создать выходной файл: "
+    newline: .string "\n"
     filename_in:  .space 256    # Буфер для имени входного файла
     filename_out: .space 256    # Буфер для имени выходного файла
-    prompt_in:   .string "Введите имя входного файла: "
-    prompt_out:  .string "Введите имя выходного файла: "
-    error_msg:   .string "Ошибка при работе с файлом\n"
 
 .text
-.globl main
-main:
-    # Сохраняем ra
-    addi sp, sp, -4
-    sw ra, 0(sp)
-    
-    # Получаем имена файлов
-    jal get_filenames
-    
-    # Открываем файлы и обрабатываем данные
-    jal process_files
-    
-    # Восстанавливаем ra и завершаем программу
-    lw ra, 0(sp)
-    addi sp, sp, 4
-    li a7, 10
-    ecall
-
-# Подпрограмма получения имен файлов
-get_filenames:
-    addi sp, sp, -4
-    sw ra, 0(sp)
-    
-    # Запрос имени входного файла
-    la a0, prompt_in
-    li a7, 4
-    ecall
-    
-    la a0, filename_in
-    li a1, 256
-    li a7, 8
-    ecall
-    
-    # Удаление \n из входного имени
-    la a0, filename_in
-    jal remove_newline
-    
-    # Запрос имени выходного файла
-    la a0, prompt_out
-    li a7, 4
-    ecall
-    
-    la a0, filename_out
-    li a1, 256
-    li a7, 8
-    ecall
-    
-    # Удаление \n из выходного имени
-    la a0, filename_out
-    jal remove_newline
-    
-    lw ra, 0(sp)
-    addi sp, sp, 4
-    ret
-
 # Подпрограмма обработки файлов
 process_files:
     # Сохраняем используемые регистры
-    addi sp, sp, -20
-    sw ra, 16(sp)
-    sw t3, 12(sp)    # для дескриптора входного файла
-    sw t4, 8(sp)     # для размера файла
-    sw t5, 4(sp)     # для дескриптора выходного файла
-    sw t0, 0(sp)     # для текущей позиции
+    addi sp, sp, -24
+    sw ra, 20(sp)
+    sw t3, 16(sp)    # для дескриптора входного файла
+    sw t4, 12(sp)    # для размера файла
+    sw t5, 8(sp)     # для дескриптора выходного файла
+    sw t0, 4(sp)     # для текущей позиции
+    sw t1, 0(sp)     # для сравнения Y/N
     
     # Открытие входного файла
     la a0, filename_in
-    li a1, 0
+    li a1, 0         # открываем для чтения
     li a7, 1024
     ecall
-    bltz a0, file_error
+    bltz a0, input_error
     mv t3, a0
     
     # Получение размера файла
     mv a0, t3
     li a1, 0
-    li a2, 2
+    li a2, 2         # SEEK_END
     li a7, 62
     ecall
-    mv t4, a0
+    mv t4, a0        # сохраняем размер
+    
+    # Возвращаемся в начало файла
+    mv a0, t3
+    li a1, 0
+    li a2, 0         # SEEK_SET
+    li a7, 62
+    ecall
     
     # Открытие выходного файла
     la a0, filename_out
-    li a1, 1
+    li a1, 1         # открываем для записи
     li a7, 1024
     ecall
-    bltz a0, file_error
+    bgez a0, file_opened  # если файл открылся успешно
+    
+    # Создаем файл, если его нет
+    la a0, filename_out
+    li a1, 1         # создаем для записи
+    li a2, 0x1FF     # права доступа (777 в восьмеричной системе)
+    li a7, 1024      # системный вызов для создания файла
+    ecall
+    bltz a0, output_error
+    
+file_opened:
     mv t5, a0
     
-    # Вызов подпрограммы для реверса файла
+    # Делаем реверс файла
     mv a0, t3        # входной дескриптор
     mv a1, t5        # выходной дескриптор
     mv a2, t4        # размер файла
@@ -111,12 +82,13 @@ process_files:
     ecall
     
     # Восстанавливаем регистры
-    lw ra, 16(sp)
-    lw t3, 12(sp)
-    lw t4, 8(sp)
-    lw t5, 4(sp)
-    lw t0, 0(sp)
-    addi sp, sp, 20
+    lw ra, 20(sp)
+    lw t3, 16(sp)
+    lw t4, 12(sp)
+    lw t5, 8(sp)
+    lw t0, 4(sp)
+    lw t1, 0(sp)
+    addi sp, sp, 24
     ret
 
 # Подпрограмма реверса файла
@@ -179,7 +151,6 @@ reverse_done:
 
 # Функция для удаления символа новой строки из строки
 remove_newline:
-    # Сохраняем используемые регистры на стеке
     addi sp, sp, -16
     sw ra, 12(sp)
     sw t0, 8(sp)
@@ -199,7 +170,6 @@ replace_newline:
     sb zero, (t0)       # Заменяем \n на \0
     
 remove_done:
-    # Восстанавливаем регистры
     lw ra, 12(sp)
     lw t0, 8(sp)
     lw t1, 4(sp)
@@ -207,13 +177,43 @@ remove_done:
     addi sp, sp, 16
     ret
 
-    bltz a0, file_error
-    
-    bltz a0, file_error
-
 file_error:
     la a0, error_msg
     li a7, 4
     ecall
+    li a7, 10
+    ecall
+
+input_error:
+    la a0, error_input
+    li a7, 4
+    ecall
+    
+    # Выводим имя файла, который не удалось открыть
+    la a0, filename_in
+    li a7, 4
+    ecall
+    
+    la a0, newline
+    li a7, 4
+    ecall
+    
+    li a7, 10
+    ecall
+
+output_error:
+    la a0, error_output
+    li a7, 4
+    ecall
+    
+    # Выводим имя файла, который не удалось создать
+    la a0, filename_out
+    li a7, 4
+    ecall
+    
+    la a0, newline
+    li a7, 4
+    ecall
+    
     li a7, 10
     ecall
